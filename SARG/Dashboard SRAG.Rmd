@@ -1,0 +1,812 @@
+---
+title: "SRAG"
+author: "Estatística - UFF"
+output:
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: fill
+    source_code: embed
+    theme: 
+      version: 4
+      bootswatch: cosmo
+      primary: "#000000"
+runtime: shiny
+resource_files:
+- 'Bases/All_Brazilian_SRAG_Data_2009A2023.feather'
+- 'Bases/shapes.gpkg'
+---
+
+```{r setup, include=FALSE}
+# Pacotes
+library(sf)
+library(dplyr)
+library(ggplot2)
+library(shiny)
+library(plotly)
+
+# Bases
+shape_muni <- st_read('Bases/shapes.gpkg', layer = "shape_muni")
+shape_br <- st_read('Bases/shapes.gpkg', layer = "shape_br")
+df <- arrow::read_feather('Bases/All_Brazilian_SRAG_Data_2009A2022.feather')
+
+# Rotulos
+meses <- c("Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+           "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro")
+RTL_Tipo <- setNames(c("obs_", "tx_"),
+                     c("Observações", "Taxa"))
+RTL_Var <- setNames(c("total", "female", "male","1.19", "20.59","60."),
+                    c("Total", "Total Feminino", "Total Masculino",
+                      "Total 0 a 19 anos", "Total 20 a 59 anos",
+                      "Total 60 anos ou mais"))
+RTL_muni_uf <- df |> distinct(Municipio, UF)
+RTL_numero_muni_UF <- setNames(c(22,102,62,16,417,184,1,78,246,217,853,79,141,144,
+                                 223,185,224,399,92,167,52,15,499,295,75,645,139),
+                               c("AC","AL","AM","AP","BA","CE","DF","ES","GO","MA",
+                                 "MG","MS","MT","PA","PB","PE","PI","PR","RJ","RN",
+                                 "RO","RR","RS","SC","SE","SP","TO"))
+RTL_numero_muni_regiao <- setNames(c(467, 1794, 450, 1668, 1193),
+                                   c("Centro Oeste","Nordeste","Norte","Sudeste","Sul" ))
+
+# Outros
+modo_rederizacao <- reactiveVal("dashboard")
+```
+
+Introdução{data-icon="fa-book-open"}
+================================================================================
+
+<center>
+  <span style="font-size: 2em">
+**Monitoramento de Casos de Síndrome Respiratória Aguda Grave (SRAG) no Brasil**
+  </span>
+</center>
+
+<br>
+
+Este dashboard apresenta dados detalhados de janeiro de 2009 a dezembro de 2022, permitindo uma visão abrangente da evolução dos casos em diferentes escalas: municipal, estadual e nacional.
+
+**O que é a SRAG?**
+
+A Síndrome Respiratória Aguda Grave (SRAG) é caracterizada pelo agravamento de síndromes gripais, comprometendo a função respiratória e, frequentemente, resultando em hospitalização.
+
+Suas causas incluem vírus respiratórios, como Influenza A e B, Vírus Sincicial Respiratório e SARS-CoV-2, além de infecções bacterianas, fúngicas e outros agentes patogênicos.
+
+A identificação da SRAG ocorre quando indivíduos com síndrome gripal apresentam pelo menos um dos seguintes sinais:
+
+- Dispneia ou desconforto respiratório;
+
+- Pressão ou dor persistente no tórax;
+
+- Saturação de oxigênio inferior a 95% em ar ambiente;
+
+- Coloração azulada (cianose) nos lábios ou no rosto.
+
+**Fontes de Dados**
+
+Os dados apresentados são provenientes do OpenDataSUS, uma plataforma disponibilizada pelo Ministério da Saúde, por meio da Secretaria de Vigilância em Saúde (SVS).
+O monitoramento de SRAG no Brasil teve início com a pandemia de Influenza A(H1N1)pdm09 e, desde então, foi incorporado à vigilância de Influenza e outros vírus respiratórios.
+
+**Como utilizar o Dashboard?**
+
+Este painel interativo permite a análise dos casos de SRAG por meio de mapas de taxas, boxplots e séries históricas.
+
+A taxa média de incidência foi utilizada para representar o risco relativo de ocorrência da síndrome em cada região ao longo do tempo.
+
+Explore os dados, compare as tendências entre municípios e estados e obtenha insights valiosos sobre a evolução da SRAG no Brasil.
+
+Mapa{data-icon="fa-map"}
+================================================================================
+
+Inputs Mapa {.sidebar}
+--------------------------------------------------------------------------------
+
+### Painel de seleção
+
+<hr style="border-top: 3px solid black; margin: 10px 0;">
+
+<center>**Período**</center>
+
+```{r }
+selectInput("ano_mapa", "Ano:",
+            choices = unique(df$year),
+            selected = 2022)
+selectInput("mes_mapa", "Mês:",
+            choices = meses,
+            selected = "Janeiro")
+selectInput("limite_mapa", HTML("Padrão de limitação da taxa:<br>
+                                (Apenas no mapa de Variação)"),
+            choices = c("Mês", "Ano", "Geral"),
+            selected = "Mês")
+```
+
+<hr style="border-top: 2px solid gray; margin: 10px 0;">
+
+<center>**Preenchimento**</center>
+
+```{r}
+selectInput("tipo_mapa", HTML("Tipo:"),
+                  choices = names(RTL_Tipo),
+                  selected = "Taxa")
+selectInput("var_mapa", "Variável:",
+            choices = names(RTL_Var),
+            selected = "Total")
+```
+
+<hr style="border-top: 3px solid black; margin: 10px 0;">
+
+Fonte: *OpenDataSUS*
+
+```{r}
+actionButton("info_mapa", "Informações", icon = icon("info-circle"))
+observeEvent(input$info_mapa, {
+  shinyalert::shinyalert(
+    title = "Visualização e Opções de Filtros",
+    text = HTML("
+    <div style='text-align: left;'>
+    <center><b><u>Visualização</u></b></center>
+    <ul>
+        <li><b>Variação</b>:</li>
+          <p>Exibe os valores da análise.</p>
+          <br>
+        <li><b>Distribuição</b>:</li>
+          <p>Exibe a distribuição em quartis dos valores da análise.</p>
+          <br>
+    </ul>
+    <center><b><u>Filtros</u></b></center>
+      <ul>
+        <li><b>Ano</b>:</li>
+          <p>Selecione o ano entre 2009 e 2022.</p>
+          <br>
+        <li><b>Mês</b>:</li>
+          <p>Selecione o mês entre Janeiro e Dezembro.</p>
+          <br>
+        <li><b>Limite do padrão da escala</b>:</li>
+          <p>Fixa no nível da escala lateral do mapa, podendo ser:</p>
+          <p><u>Mês</u>:Mínimo e Máximo do mês analisado;</p>
+          <p><u>Ano</u>:Mínimo e Máximo do ano analisado;</p>
+          <p><u>Geral</u>:Mínimo e Máximo de todo o período analisado.</p>
+          <br>
+        <li><b>Tipo</b>:</li>
+          <p>Tipo de dado analisado, podendo ser:</p>
+          <p><u>Observações</u>:Novos casos de SRAG no período analisado;</p>
+          <p><u>Taxa</u>: \\( \\frac{\\text{Observações}}{\\text{População}} \\times 10^4 \\)</p>
+          <br>
+        <li><b>Variável</b>:</li>
+          <p><u>Total</u>: Novos Casos de SRAG de ambos os sexos e idades;</p>
+          <p><u>Total Masculino</u>: Novos Casos de SRAG do sexo masculino;</p>
+          <p><u>Total Feminino</u>: Novos Casos de SRAG do sexo feminino;</p>
+          <p><u>Total 0 a 19 anos</u>: Novos Casos de SRAG em pessoas com idade entre 0 e 19 anos;</p>
+          <p><u>Total 20 a 59 anos</u>: Novos Casos de SRAG em pessoas com idade entre 20 e 59 anos;</p>
+          <p><u>Total 60 anos ou mais</u>: Novos Casos de SRAG em pessoas com idade de 60 anos ou mais;</p>
+      </ul>
+    </div>"
+    ),
+    type = "info",
+    showConfirmButton = TRUE,
+    html = TRUE
+    )
+  })
+```
+
+<br>
+
+```{r }
+# Botão de Download
+## Unico
+downloadButton("download_mapa_variacao", "Baixar Mapa Variação")
+output$download_mapa_variacao <- downloadHandler(
+    filename = function() {
+      paste0("Mapa_variação_SRAG_", Sys.Date(), ".png")
+    },
+    content = function(file) {
+      modo_rederizacao("download")
+      ggsave(file, plot = plot_mapa_variacao_reactive(), device = "png", width = 6, height = 4)
+    }
+  )
+
+## Facetado
+downloadButton("download_mapa_distribuicao", "Baixar Mapa Distribuição")
+output$download_mapa_distribuicao <- downloadHandler(
+    filename = function() {
+      paste0("Mapa_Distribuição_SRAG_", Sys.Date(), ".png")
+    },
+    content = function(file) {
+      modo_rederizacao("download")
+      ggsave(file, plot = plot_mapa_distribuicao_reactive(), device = "png", width = 6, height = 4)
+    }
+  )
+```
+Mapa{.tabset}
+--------------------------------------------------------------------------------
+### Variação
+
+```{r}
+plot_mapa_variacao_reactive <- reactive({
+  
+  # Ajustando variavel analisada
+  variavel_mapa <- paste0(RTL_Tipo[input$tipo_mapa], RTL_Var[input$var_mapa])
+  
+  # Preparando base
+  df_mapa_filtrada_variacao <- df[df$year == input$ano_mapa, ] |>
+    group_by(code_muni, Municipio, year, month) |> 
+    summarise(!!variavel_mapa := sum(.data[[variavel_mapa]]),
+              .groups = 'drop')
+  limite_pdr_ano <- c(min(df_mapa_filtrada_variacao[[variavel_mapa]]),
+                      max(df_mapa_filtrada_variacao[[variavel_mapa]]))
+  df_mapa_filtrada_variacao <- filter(df_mapa_filtrada_variacao, month == input$mes_mapa) |> 
+    full_join(shape_muni, by = "code_muni") |> 
+    mutate(!!variavel_mapa := tidyr::replace_na(.data[[variavel_mapa]], 0))
+  
+  # Padronização da escala
+  limite_pdr_mapa <- switch(input$limite_mapa,
+                            "Mês" = c(min(df_mapa_filtrada_variacao[[variavel_mapa]]),
+                                      max(df_mapa_filtrada_variacao[[variavel_mapa]])),
+                            "Ano" = limite_pdr_ano,
+                            "Geral" = c(min(df_mapa_filtrada_variacao[[variavel_mapa]]),
+                                        max(df_mapa_filtrada_variacao[[variavel_mapa]])))
+  
+  # Texto da legenda
+  legenda_mapa_variacao <- ifelse(input$tipo_mapa == "Observações",
+                                  "Observações",
+                                  "Taxa\n(por 10 mil)")
+  # Mapa
+  ggplot(df_mapa_filtrada_variacao) +
+    geom_sf(aes(fill = .data[[variavel_mapa]], col = .data[[variavel_mapa]], geometry = geom)) +
+    geom_sf(data= shape_br, fill= "transparent", lwd= 0.4, col= "black")+
+    scale_fill_gradient(low = "#fff3b0",
+                        high = "#540b0e",
+                        limits= limite_pdr_mapa,
+                        guide = guide_colorbar(direction = "vertical",
+                                               barheight = if (modo_rederizacao() == "dashboard") unit(0.8, "npc") else NULL,
+                                               barwidth = if (modo_rederizacao() == "dashboard") unit(0.035, "npc") else NULL)) +
+     scale_color_gradient(low = "#fff3b0",
+                          high = "#540b0e",
+                          limits= limite_pdr_mapa,
+                          guide = guide_colorbar(direction = "vertical",
+                                                 barheight = if (modo_rederizacao() == "dashboard") unit(0.8, "npc") else NULL,
+                                                 barwidth = if (modo_rederizacao() == "dashboard") unit(0.035, "npc") else NULL)) +
+     labs(title = paste("<b>", input$tipo_mapa,
+                        "</b> de <b>", input$var_mapa,
+                        "</b> com SRAG - <b>", input$mes_mapa,
+                        "</b> de <b>", input$ano_mapa, "</b>"),
+          x = "", y = "",
+          fill = legenda_mapa_variacao, col = legenda_mapa_variacao) +
+     theme_bw() +
+     theme(plot.title = ggtext::element_markdown(size = ifelse(modo_rederizacao() == "dashboard", 20, 14),
+                                                 hjust = 0.5),
+           panel.border = element_blank(),
+           legend.background = element_blank(),
+           legend.text = element_text(size = ifelse(modo_rederizacao() == "dashboard", 14, 10),
+                                      face = 'bold'),
+           legend.title = element_text(size = ifelse(modo_rederizacao() == "dashboard", 14, 10),
+                                       face = "bold"),
+           axis.ticks = element_blank())
+})
+
+output$plot_mapa_variacao <- renderPlot({
+  modo_rederizacao("dashboard")
+  plot_mapa_variacao_reactive()
+})
+
+fillPage(plotOutput("plot_mapa_variacao", height = "100%", width = "100%"))
+```
+
+### Distribuição
+
+```{r}
+plot_mapa_distribuicao_reactive <- reactive({
+  
+  # Ajustando variavel analisada
+  variavel_mapa <- paste0(RTL_Tipo[input$tipo_mapa], RTL_Var[input$var_mapa])
+  
+  # Preparando base
+  df_mapa_filtrada_distribuicao <- df[df$year == input$ano_mapa
+                         & df$month == input$mes_mapa, ] |> 
+    group_by(code_muni) |> 
+    summarise(!!variavel_mapa := sum(.data[[variavel_mapa]]),
+              .groups = 'drop') |> 
+    full_join(shape_muni, by = "code_muni") |> 
+    mutate(!!variavel_mapa := tidyr::replace_na(.data[[variavel_mapa]], 0))
+  
+  quartis_mapa_distribuicao <- quantile(df_mapa_filtrada_distribuicao[[variavel_mapa]],
+                                        probs = seq(0, 1, by = 0.25))
+  label_quartil <- c(paste("Q1 - de", round(quartis_mapa_distribuicao[1], 2),
+                           "a",round(quartis_mapa_distribuicao[2], 2)),
+                     paste("Q2 - de", round(quartis_mapa_distribuicao[2], 2),
+                           "a", round(quartis_mapa_distribuicao[3], 2)),
+                     paste("Q3 - de", round(quartis_mapa_distribuicao[3], 2),
+                           "a", round(quartis_mapa_distribuicao[4], 2)),
+                     paste("Q4 - de", round(quartis_mapa_distribuicao[4], 2),
+                           "a", round(quartis_mapa_distribuicao[5], 2))) 
+  validate(
+    need(!anyDuplicated(quartis_mapa_distribuicao), 
+         paste0("Os quartis de", input$mes_mapa, "-",input$ano_mapa,
+               "possuem valores duplicados. Não é possível gerar o gráfico."))
+  )
+  
+  df_mapa_filtrada_distribuicao <- mutate(df_mapa_filtrada_distribuicao,
+                                          quartis = cut(df_mapa_filtrada_distribuicao[[variavel_mapa]], 
+                                                        breaks = quartis_mapa_distribuicao, 
+                                                        include.lowest = TRUE, 
+                                                        labels = label_quartil, 
+                                                        right = FALSE))
+  
+  # Texto da legenda
+  legenda_mapa_distribuicao <- ifelse(input$tipo_mapa == "Observações",
+                                      "Quartis - Observações",
+                                      "Quartis - Taxa")
+  
+  # Cores dos quartis
+  cores_quartis <- cores_quartis <- setNames(c("#fff3b0", "#e09f3e", "#9e2a2b", "#540b0e"),
+                                             label_quartil)
+  
+  # Mapa
+  ggplot(df_mapa_filtrada_distribuicao) +
+    geom_sf(aes(fill = quartis, col = quartis, geometry = geom)) +
+    geom_sf(data= shape_br, fill= "transparent", lwd= 0.4, col= "black")+
+    scale_fill_manual(values = cores_quartis)+
+    scale_color_manual(values = cores_quartis)+
+    labs(title = paste("<b>", input$tipo_mapa,
+                       "</b>de<b>", input$var_mapa,
+                       "</b>com SRAG-<b>", input$mes_mapa,
+                       "</b>de<b>", input$ano_mapa, "</b>"),
+         x = "", y = "",
+         fill = legenda_mapa_distribuicao, col = legenda_mapa_distribuicao) +
+    theme_bw() +
+    theme(plot.title = ggtext::element_markdown(size = ifelse(modo_rederizacao() == "dashboard", 20, 16),
+                                                hjust = 0.5),
+          panel.border = element_blank(),
+          legend.background = element_blank(),
+          legend.text = element_text(size = ifelse(modo_rederizacao() == "dashboard", 14, 10),
+                                     face = 'bold'),
+          legend.title = element_text(size = ifelse(modo_rederizacao() == "dashboard", 14, 10),
+                                      face = "bold"),
+          axis.ticks = element_blank())
+})
+
+output$plot_mapa_distribuicao <- renderPlot({
+  modo_rederizacao("dashboard")
+  plot_mapa_distribuicao_reactive()
+})
+
+fillPage(plotOutput("plot_mapa_distribuicao", height = "100%", width = "100%"))
+```
+
+Boxplot{data-icon="fa-bar-chart"}
+================================================================================
+
+Inputs Boxplot {.sidebar}
+--------------------------------------------------------------------------------
+
+### Painel de seleção
+
+<hr style="border-top: 3px solid black; margin: 10px 0;">
+
+<center>**Período e Localização**</center>
+
+```{r}
+selectInput("ano_boxplot", "Ano:",
+            choices = unique(df$year),
+            selected = "2022")
+
+selectInput("mes_boxplot", HTML("Mês:<br>(Apenas no Único)"),
+            choices = meses,
+            selected = "Janeiro")
+
+selectInput("escala_geo_boxplot", "Escala geográfica:",
+            choices = c("Brasil", "Região", "UF"),
+            selected = "Brasil")
+
+selectInput("UF_regiao_boxplot", "Região/UF:", choices = NULL)
+observe({
+  req(input$escala_geo_boxplot != "Brasil")
+  updateSelectInput(session, "UF_regiao_boxplot",
+                    choices = switch(input$escala_geo_boxplot,
+                                     "Região" = unique(df$name_region),
+                                     "UF" = unique(RTL_muni_uf$UF)),
+                    selected = NULL)})
+```
+
+<hr style="border-top: 2px solid gray; margin: 10px 0;">
+
+<center>**Preenchimento**</center>
+
+```{r}
+selectInput("tipo_boxplot", "Tipo:",
+            choices = names(RTL_Tipo),
+            selected = "Taxa")
+selectInput("var_boxplot", "Variável:",
+            choices = names(RTL_Var),
+            selected = "total")
+```
+
+<hr style="border-top: 3px solid black; margin: 10px 0;">
+
+Fonte: *OpenDataSUS*
+
+```{r}
+actionButton("info_boxplot", "Informações", icon = icon("info-circle"))
+observeEvent(input$info_boxplot, {
+  shinyalert::shinyalert(
+    title = "Visualização e Opções de Filtros",
+    text = HTML("
+    <div style='text-align: left;'>
+    <center><b><u>Visualização</u></b></center>
+    <ul>
+        <li><b>Único</b>:</li>
+          <p>Exibe o boxplot apenas do mês selecionado.</p>
+          <br>
+        <li><b>Facetado</b>:</li>
+          <p>Exibe o boxplot de cada mês do ano selecionado.</p>
+          <br>
+    </ul>
+    <center><b><u>Filtros</u></b></center>
+      <ul>
+        <li><b>Ano</b>:</li>
+          <p>Selecione o ano entre 2009 e 2022.</p>
+          <br>
+        <li><b>Mês</b>:</li>
+          <p>Selecione o mês entre Janeiro e Dezembro.</p>
+          <br>
+        <li><b>Escala geográfica</b>:</li>
+          <p>Amplitude geográfica da análise, podendo ser:</p>
+          <p><u>Brasil</u>:País;</p>
+          <p><u>Região</u>:Grandes Regiões;</p>
+          <p><u>UF</u>: Unidades da Federação, menos o Distrito Federal.</p>
+          <br>
+        <li><b>Região/UF</b>:</li>
+          <p>Selecione a Região ou a UF, dependendo da escala geográfica selecionada.</p>
+          <br>
+        <li><b>Tipo</b>:</li>
+          <p>Tipo de dado analisado, podendo ser:</p>
+          <p><u>Observações</u>:Novos casos de SRAG no período analisado;</p>
+          <p><u>Taxa</u>: \\( \\frac{\\text{Observações}}{\\text{População}} \\times 10^4 \\)</p>
+          <br>
+        <li><b>Variável</b>:</li>
+          <p><u>Total</u>: Novos Casos de SRAG de ambos os sexos e idades;</p>
+          <p><u>Total Masculino</u>: Novos Casos de SRAG do sexo masculino;</p>
+          <p><u>Total Feminino</u>: Novos Casos de SRAG do sexo feminino;</p>
+          <p><u>Total 0 a 19 anos</u>: Novos Casos de SRAG em pessoas com idade entre 0 e 19 anos;</p>
+          <p><u>Total 20 a 59 anos</u>: Novos Casos de SRAG em pessoas com idade entre 20 e 59 anos;</p>
+          <p><u>Total 60 anos ou mais</u>: Novos Casos de SRAG em pessoas com idade de 60 anos ou mais;</p>
+      </ul>
+    </div>"
+    ),
+    type = "info",
+    showConfirmButton = TRUE,
+    html = TRUE
+    )
+  })
+```
+
+<br>
+
+```{r }
+# Botão de Download
+## Unico
+downloadButton("download_boxplot_unico", "Baixar Boxplot Único")
+output$download_boxplot_unico <- downloadHandler(
+    filename = function() {
+      paste0("Boxplot_unico_SRAG_", Sys.Date(), ".png")
+    },
+    content = function(file) {
+      modo_rederizacao("download")
+      ggsave(file, plot = boxplot_unico_reactive(), device = "png", width = 6, height = 4)
+    }
+  )
+
+## Facetado
+downloadButton("download_boxplot_facetado", "Baixar Boxplot Facetado")
+output$download_boxplot_facetado <- downloadHandler(
+    filename = function() {
+      paste0("Boxplot_facetado_SRAG_", Sys.Date(), ".png")
+    },
+    content = function(file) {
+      modo_rederizacao("download")
+      ggsave(file, plot = boxplot_facetado_reactive(), device = "png", width = 6, height = 4)
+    }
+  )
+```
+
+Boxplot {.tabset}
+--------------------------------------------------------------------------------
+### Único
+
+```{r}
+boxplot_unico_reactive <- reactive({
+  
+  # Ajustando variavel analisada
+  variavel_boxplot <- paste0(RTL_Tipo[input$tipo_boxplot], RTL_Var[input$var_boxplot])
+  
+  # Texto do eixo y
+  labs.y_boxplot_unico <- ifelse(input$tipo_boxplot == "Observações",
+                                 "Observações",
+                                 "Taxa (por 10 mil)")
+
+  # Título
+  labs.title_local_boxplot_unico <- switch(input$escala_geo_boxplot,
+                                           "Brasil" = "Brasil",
+                                           "Região" = input$UF_regiao_boxplot,
+                                           "UF" = input$UF_regiao_boxplot)
+  
+  # Filtrando base
+  df_boxplot_unico_filtrada <- switch(input$escala_geo_boxplot,
+                                      "Brasil" = df[df$year == input$ano_boxplot
+                                                    & df$month == input$mes_boxplot, ],
+                                      "Região" = df[df$year == input$ano_boxplot
+                                                    & df$month == input$mes_boxplot
+                                                    & df$name_region == input$UF_regiao_boxplot, ],
+                                      "UF" = df[df$year == input$ano_boxplot
+                                                & df$month == input$mes_boxplot
+                                                & df$UF == input$UF_regiao_boxplot, ])
+  
+  # Plot
+  ggplot(df_boxplot_unico_filtrada, aes(y = .data[[variavel_boxplot]], x = year))+
+    geom_violin(fill = "cornflowerblue") +
+    geom_boxplot(fill = "darkorange",
+                 width = 0.2) +
+    labs(title = paste("<b>", input$tipo_boxplot,
+                        "</b>de<b>", input$var_boxplot,
+                       "</b>com SRAG em<b>", labs.title_local_boxplot_unico,
+                        "</b>-<b>", input$mes_boxplot,
+                        "</b>de<b>", input$ano_boxplot, "</b>"),
+         x = "", y = labs.y_boxplot_unico) +
+    theme_bw()+
+    theme(plot.title = ggtext::element_markdown(size = ifelse(modo_rederizacao() == "dashboard", 20, 14),
+                                                hjust = 0.5),
+          panel.border = element_blank(),
+          legend.background = element_blank(),
+          axis.text.x = element_blank(),
+          axis.text.y = element_text(size = ifelse(modo_rederizacao() == "dashboard", 14, 8),
+                                     face = 'bold'),
+          axis.ticks = element_blank(),
+          axis.title.y = element_text(size = ifelse(modo_rederizacao() == "dashboard", 14, 8),
+                                      face = 'bold'),
+          panel.grid.major.y = element_line(color = 'gray60'))
+   }
+)
+
+output$boxplot_unico <- renderPlot({
+  modo_rederizacao("dashboard")
+  boxplot_unico_reactive()
+})
+
+fillPage(plotOutput("boxplot_unico", height = "100%", width = "100%"))
+```
+
+### Facetado
+
+```{r}
+boxplot_facetado_reactive <- reactive({
+  
+  # Ajustando variavel analisada
+  variavel_boxplot <- paste0(RTL_Tipo[input$tipo_boxplot], RTL_Var[input$var_boxplot])
+  
+  # Texto do eixo y
+  labs.y_boxplot_facetado <- ifelse(input$tipo_boxplot == "Observações",
+                                    "Observações",
+                                    "Taxa (por 10 mil)")
+  
+  # Título
+  labs.title_local_boxplot_facetado <- switch(input$escala_geo_boxplot,
+                                              "Brasil" = "Brasil",
+                                              "Região" = input$UF_regiao_boxplot,
+                                              "UF" = input$UF_regiao_boxplot)
+                                              
+  
+  # Filtrando base 
+  df_boxplot_facetado_filtrada <- switch(input$escala_geo_boxplot,
+                                         "Brasil" = df[df$year == input$ano_boxplot, ],
+                                         "Região" = df[df$year == input$ano_boxplot
+                                                       & df$name_region == input$UF_regiao_boxplot, ],
+                                         "UF" = df[df$year == input$ano_boxplot
+                                                   & df$UF == input$UF_regiao_boxplot, ])
+    
+  # Plot
+  ggplot(df_boxplot_facetado_filtrada, aes(y = .data[[variavel_boxplot]], x = year))+
+    geom_violin(fill = "cornflowerblue") +
+    geom_boxplot(fill = "darkorange",
+                 width = 0.2) +
+    labs(title = paste("<b>", input$tipo_boxplot,
+                        "</b>de<b>", input$var_boxplot,
+                       "</b>com SRAG em<b>", labs.title_local_boxplot_facetado,
+                        "</b>-<b>", input$ano_boxplot, "</b>"),
+         x = "", y = labs.y_boxplot_facetado) +
+    theme_bw()+
+    facet_wrap(~factor(month, levels = meses),ncol = 4) +
+    theme(plot.title = ggtext::element_markdown(size = ifelse(modo_rederizacao() == "dashboard", 20, 14),
+                                                hjust = 0.5),
+          panel.border = element_blank(),
+          legend.background = element_blank(),
+          axis.text.x = element_blank(),
+          axis.ticks = element_blank(),
+          axis.title.y = element_text(size = ifelse(modo_rederizacao() == "dashboard", 14, 8),
+                                      face = 'bold'),
+          panel.grid.major.y = element_line(color = 'gray60'))
+   }
+)
+
+output$boxplot_facetado <- renderPlot({
+  modo_rederizacao("dashboard")
+  boxplot_facetado_reactive()
+})
+
+fillPage(plotOutput("boxplot_facetado", height = "100%", width = "100%"))
+```
+
+Série Temporal{data-icon="fa-line-chart"}
+================================================================================
+
+Inputs Série Temporal{.sidebar}
+--------------------------------------------------------------------------------
+
+### Painel de seleção
+
+<hr style="border-top: 3px solid black; margin: 10px 0;">
+
+<center>**Período e Localização**</center>
+
+```{r }
+selectInput("escala_geo_serie", "Escala geográfica:",
+            choices = c("Brasil","Região", "UF", "Município"),
+            selected = "Brasil")
+
+selectInput("regiao_UF_serie", "Região/UF:", choices = NULL)
+observe({
+  req(input$escala_geo_serie != "Brasil")
+  updateSelectInput(session, "regiao_UF_serie",
+                    choices = switch(input$escala_geo_serie,
+                                     "Região" = unique(df$name_region),
+                                     "UF" = unique(RTL_muni_uf$UF),
+                                     "Município" = unique(RTL_muni_uf$UF)),
+                    selected = NULL)})
+
+selectInput("municipio_serie", "Município:", choices = NULL)
+observe({
+  req(input$escala_geo_serie == "Município", !is.null(input$regiao_UF_serie))
+  updateSelectInput(session, "municipio_serie",
+                    choices = RTL_muni_uf |> 
+                              filter(UF == input$regiao_UF_serie) |> 
+                              pull(Municipio),
+                    selected = NULL)
+})
+
+```
+
+<hr style="border-top: 2px solid gray; margin: 10px 0;">
+
+<center>**Preenchimento**</center>
+
+```{r}
+selectInput("tipo_serie", "Tipo:",
+            choices = names(RTL_Tipo),
+            selected = "Observações")
+selectInput("var_serie", "Variável:",
+            choices = names(RTL_Var),
+            selected = "Total")
+```
+
+<hr style="border-top: 3px solid black; margin: 10px 0;">
+
+Fonte: *OpenDataSUS*
+
+```{r}
+actionButton("info_serie", "Informações", icon = icon("info-circle"))
+observeEvent(input$info_serie, {
+  shinyalert::shinyalert(
+    title = "Opções de Filtros",
+    text = HTML("
+    <div style='text-align: left;'>
+      <ul>
+        <li><b>Intervalo de datas</b>:</li>
+          <p>Selecione o intervalo de dadas entre 2009 e 2022.</p>
+          <br>
+        <li><b>Escala geográfica</b>:</li>
+          <p>Amplitude geográfica da análise, podendo ser:</p>
+          <p><u>Brasil</u>:País;</p>
+          <p><u>Região</u>:Grandes Regiões;</p>
+          <p><u>UF</u>: Unidades da Federação, menos o Distrito Federal;</p>
+          <p><u>Município</u>:Município.</p>
+          <br>
+        <li><b>Região/UF</b>:</li>
+          <p>Selecione a Região ou a UF, dependendo da escala geográfica selecionada.</p>
+          <br>
+        <li><b>Município</b>:</li>
+          <p>Selecione o Município da respectiva UF selecionada.</p>
+          <br>
+          <li><b>Tipo</b>:</li>
+          <p>Tipo de dado analisado, podendo ser:</p>
+          <p><u>Observações</u>:Novos casos de SRAG no período analisado;</p>
+          <p><u>Taxa</u>: \\( \\frac{\\text{Observações}}{\\text{População}} \\times 10^4 \\)
+            (Para UF, Região e Brasil a Taxa é calculada através da Taxa Média)</p>
+          <br>
+        <li><b>Variável</b>:</li>
+          <p><u>Total</u>: Novos Casos de SRAG de ambos os sexos e idades;</p>
+          <p><u>Total Masculino</u>: Novos Casos de SRAG do sexo masculino;</p>
+          <p><u>Total Feminino</u>: Novos Casos de SRAG do sexo feminino;</p>
+          <p><u>Total 0 a 19 anos</u>: Novos Casos de SRAG em pessoas com idade entre 0 e 19 anos;</p>
+          <p><u>Total 20 a 59 anos</u>: Novos Casos de SRAG em pessoas com idade entre 20 e 59 anos;</p>
+          <p><u>Total 60 anos ou mais</u>: Novos Casos de SRAG em pessoas com idade de 60 anos ou mais;</p>
+      </ul>
+    </div>"
+    ),
+    type = "info",
+    showConfirmButton = TRUE,
+    html = TRUE
+    )
+  })
+```
+
+Série Temporal
+--------------------------------------------------------------------------------
+
+```{r}
+output$plot_serie <- renderPlotly({
+  # Ajustando variavel analisada
+  variavel_serie <- paste0(RTL_Tipo[input$tipo_serie], RTL_Var[input$var_serie])
+
+  # Texto do eixo y
+  labs.y_serie <- if (input$tipo_serie == "Observações") {
+    "Observações"
+  } else if (input$escala_geo_serie == "Município") {
+    "Taxa (por 10 mil)"
+  } else {
+    "Taxa Média (por 10 mil)"
+  }
+
+  # Título
+  labs.title_serie <- paste("<b>", ifelse(input$tipo_serie == "Taxa" & input$escala_geo_serie != "Município", "Taxa Média", input$tipo_serie),
+                            "</b>de<b>", input$var_serie, "</b>com SRAG -<b>", switch(input$escala_geo_serie,
+                                                                                         "Brasil" = "Brasil",
+                                                                                         "Região" = input$regiao_UF_serie,
+                                                                                         "UF" = input$regiao_UF_serie,
+                                                                                         "Município" = input$municipio_serie),
+                            "</b>")
+
+  # Nª de municípios da UF
+  if(input$escala_geo_serie == "UF" & input$tipo_serie == "Taxa"){
+    numero_muni_UF <- RTL_numero_muni_UF[input$regiao_UF_serie]
+  } else if(input$escala_geo_serie == "Região" & input$tipo_serie == "Taxa"){
+    numero_muni_regiao <- RTL_numero_muni_regiao[input$regiao_UF_serie]
+  }
+
+  # Filtrando base
+  df_serie_filtrada <- switch(
+    input$escala_geo_serie,
+    "Brasil" = df |> 
+      group_by(Date) |> 
+      summarise(!!sym(variavel_serie) := ifelse(input$tipo_serie == "Observações",
+                                                sum(.data[[variavel_serie]]),
+                                                sum(.data[[variavel_serie]])/5572),
+                .groups = 'drop'),
+    "Região" = df[df$name_region == input$regiao_UF_serie, ] |> 
+      group_by(Date) |> 
+      summarise(!!sym(variavel_serie) := ifelse(input$tipo_serie == "Observações",
+                                                sum(.data[[variavel_serie]]),
+                                                sum(.data[[variavel_serie]])/numero_muni_regiao),
+                .groups = 'drop'),
+    "UF" = df[df$UF == input$regiao_UF_serie, ] |> 
+      group_by(Date) |> 
+      summarise(!!sym(variavel_serie) := ifelse(input$tipo_serie == "Observações",
+                                                sum(.data[[variavel_serie]]),
+                                                sum(.data[[variavel_serie]])/numero_muni_UF),
+                .groups = 'drop'),
+    "Município" = df[df$Municipio == input$municipio_serie, ]
+  )
+
+  # Plot
+  plot_ly(df_serie_filtrada, x = ~Date, y = ~.data[[variavel_serie]], type = 'scatter', mode = 'lines', line = list(color = "darkblue")) %>%
+    layout(title = list(text = labs.title_serie,
+                        font = list(size = 20)),
+           xaxis = list(title = "",
+                        showgrid = TRUE, gridcolor = "gray60"),
+           yaxis = list(title = labs.y_serie,
+                        showgrid = TRUE, gridcolor = "gray80",
+                        tickformat = ifelse(max(df_serie_filtrada[[variavel_serie]]) >= 1e6, ".2s", ".3s")),
+           hovermode = "x unified",
+           plot_bgcolor = "white",
+           margin = list(l = 50, r = 50, t = 50, b = 50))
+})
+
+fillPage(plotlyOutput("plot_serie", height = "100%", width = "100%"))
+```
+

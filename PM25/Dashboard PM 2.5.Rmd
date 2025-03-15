@@ -1,0 +1,553 @@
+---
+title: "Média PM 2.5"
+author: "Estatística - UFF"
+output:
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: fill
+    source_code: embed
+    theme: 
+      version: 4
+      bootswatch: cosmo
+      primary: "#000000"
+runtime: shiny
+resource_files:
+- 'Bases/pm2.5_dashboard.feather'
+- 'Bases/shapes.gpkg'
+---
+
+```{r setup, include=FALSE}
+# Pacotes
+library(sf)
+library(dplyr)
+library(ggplot2)
+library(shiny)
+library(plotly)
+
+
+# Bases
+shape_unico <- st_read('Bases/shapes.gpkg', layer = "shape_principal")
+shape_br <- st_read('Bases/shapes.gpkg', layer = "shape_br")
+df <- arrow::read_feather('Bases/pm2.5_dashboard.feather')
+
+# Rotulos
+meses <- c("Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", 
+           "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro")
+RTL_muni_uf <- df |> distinct(NM_MUN, SIGLA_UF)
+
+# Outros
+modo_rederizacao <- reactiveVal("dashboard")
+```
+
+Introdução{data-icon="fa-book-open"}
+================================================================================
+
+<center>
+  <span style="font-size: 2em">
+**Monitoramento da Qualidade do Ar: Concentração de PM<sub>2.5</sub> no Brasil**
+  </span>
+</center>
+
+<br>
+
+Este dashboard apresenta a média mensal da concentração de partículas finas em suspensão (PM<sub>2.5</sub>) para cada município brasileiro, cobrindo o período de janeiro de 2000 a dezembro de 2022.
+
+**O que é PM<sub>2.5</sub>?**
+
+De acordo com a European Environment Agency, PM<sub>2.5</sub> refere-se a partículas com diâmetro inferior a 2,5 micrômetros, que podem penetrar profundamente nos pulmões e na corrente sanguínea, estando associadas a diversas doenças respiratórias e cardiovasculares.
+
+O monitoramento dessas partículas é essencial para compreender os impactos da poluição atmosférica na saúde pública e no meio ambiente.
+
+**Fontes de Dados**
+
+Os dados apresentados neste painel são provenientes de duas fontes reconhecidas internacionalmente:
+
+- PM2.5_CAMS: Dados obtidos do Copernicus Atmosphere Monitoring Service (CAMS Global Reanalysis), um conjunto de reanálises globais da composição atmosférica, com resolução espacial de 14 km e temporal de três horas. Esses dados também estão disponíveis no painel Vigiar (Vigiar Saúde Ambiental).
+
+- PM2.5_EDF: Estimativas da concentração média mensal de , disponibilizadas pelo Grupo de Análise de Composição Atmosférica da Universidade de Washington, com alta resolução espacial (~1 km). Essas estimativas podem ser acessadas no portal Surface .
+
+**Como utilizar o Dashboard?**
+
+Este painel permite visualizar e analisar os dados em diferentes escalas – municipal, estadual e nacional – por meio de mapas interativos, boxplots e séries temporais.
+
+As informações apresentadas podem ajudar a identificar tendências regionais, sazonalidades e padrões de poluição, contribuindo para a formulação de políticas públicas e estratégias de mitigação.
+
+Explore os dados, compare regiões e obtenha insights sobre a evolução da qualidade do ar no Brasil ao longo das últimas décadas.
+
+Mapa{data-icon="fa-map"}
+================================================================================
+
+Inputs {.sidebar}
+--------------------------------------------------------------------------------
+
+### Painel de seleção
+
+Selecione aqui as definições do mapa.
+
+<hr style="border-top: 3px solid black; margin: 10px 0;">
+
+```{r }
+selectInput("ano_mapa", "Ano:",
+            choices = unique(df$Ano),
+            selected = max(unique(df$Ano)))
+
+selectInput("mes_mapa", "Mês:",
+            choices = meses,
+            selected = "Janeiro")
+
+selectInput("limite_mapa", "Limite do padrão da escala:",
+            choices = c("Mês", "Ano", "Geral"),
+            selected = "Mês")
+```
+
+<hr style="border-top: 3px solid black; margin: 10px 0;">
+
+```{r}
+# Botão de Informação
+actionButton("info_mapa", "Informações", icon = icon("info-circle"))
+observeEvent(input$info_mapa, {
+  shinyalert::shinyalert(
+    title = "Opções de Filtros",
+    text = HTML("
+    <div style='text-align: left;'>
+      <ul>
+        <li><b>Ano</b>:</li>
+          <p>Selecione o ano entre 2000 e 2022.</p>
+          <br>
+        <li><b>Mês</b>:</li>
+          <p>Selecione o mês entre Janeiro e Dezembro.</p>
+          <br>
+        <li><b>Limite do padrão da escala</b>:</li>
+          <p>Fixa no nível da escala lateral do mapa, podendo ser:</p>
+          <p><u>Mês</u>:Mínimo e Máximo do mês analisado;</p>
+          <p><u>Ano</u>:Mínimo e Máximo do ano analisado;</p>
+          <p><u>Geral</u>:Mínimo e Máximo de todo o período analisado.</p>
+      </ul>
+    </div>"
+    ),
+    type = "info",
+    showConfirmButton = TRUE,
+    html = TRUE
+    )
+  })
+```
+
+<br>
+
+```{r }
+# Botão de Download
+downloadButton("download_plot_mapa", "Baixar Mapa")
+output$download_plot_mapa <- downloadHandler(
+    filename = function() {
+      paste0("Mapa_PM25_", Sys.Date(), ".png")
+    },
+    content = function(file) {
+      modo_rederizacao("download")
+      ggsave(file, plot = plot_mapa_reactive(), device = "png", width = 6, height = 4)
+    }
+  )
+```
+
+Mapa
+--------------------------------------------------------------------------------
+
+```{r }
+plot_mapa_reactive <- reactive({
+  
+  # Base
+  df_mapa_filtrada <- df[df$Ano == input$ano_mapa, ]
+  limite_tx_ano <- c(min(df_mapa_filtrada$Media_PM25),
+                     max(df_mapa_filtrada$Media_PM25))
+  df_mapa_filtrada <- filter(df_mapa_filtrada, Mes == input$mes_mapa) |> 
+    full_join(shape_unico, by = "code_muni")
+    
+  # Limite
+  limite_pdr_unico <- switch(input$limite_mapa,
+                       "Mês" = c(min(df_mapa_filtrada$Media_PM25),
+                                 max(df_mapa_filtrada$Media_PM25)),
+                       "Ano" = limite_tx_ano,
+                       "Geral" = c(0.7207841, 152.7278812))
+  
+  # Plot
+  ggplot(df_mapa_filtrada) +
+    geom_sf(aes(fill = Media_PM25, col = Media_PM25, geometry = geom)) +
+    geom_sf(data = shape_br, fill = "transparent", lwd = 0.4, col = "black") +
+    scale_fill_gradient(low = "#fff3b0",
+                        high = "#540b0e",
+                        limits = limite_pdr_unico,
+                        guide = guide_colorbar(direction = "vertical",
+                                               barheight = unit(0.8, "npc"),
+                                               barwidth = unit(0.035, "npc"))) +
+    scale_color_gradient(low = "#fff3b0",
+                         high = "#540b0e",
+                         limits = limite_pdr_unico,
+                         guide = guide_colorbar(direction = "vertical",
+                                                barheight = unit(0.8, "npc"),
+                                                barwidth = unit(0.035, "npc"))) +
+    labs(title = paste("Média PM<sub>2.5</sub> -<b>", input$mes_mapa,
+                       "</b>de<b>", input$ano_mapa, "</b>"),
+         x = "", y = "",
+         caption = "Fonte: *Atmospheric Composition Analysis Group*",
+         fill = expression(PM[2.5] ~ "[" ~ µg/m^3 ~ "]"),
+         col = expression(PM[2.5] ~ "[" ~ µg/m^3 ~ "]")) +
+    theme_bw() +
+    theme(plot.title = ggtext::element_markdown(size = ifelse(modo_rederizacao() == "dashboard", 20, 16),
+                                                hjust = 0.5),
+          plot.caption = ggtext::element_markdown(hjust = 0),
+          panel.border = element_blank(),
+          legend.background = element_blank(),
+          legend.text = element_text(size = ifelse(modo_rederizacao() == "dashboard", 14, 10),
+                                     face = 'bold'),
+          legend.title = element_text(size = ifelse(modo_rederizacao() == "dashboard", 20, 10),
+                                      face = "bold"),
+          axis.ticks = element_blank())
+})
+
+output$mapa_plot <- renderPlot({
+  modo_rederizacao("dashboard")
+  plot_mapa_reactive()
+})
+fillPage(plotOutput("mapa_plot", height = "100%", width = "100%"))
+```
+
+Boxplot{data-icon="fa-bar-chart"}
+================================================================================
+
+Inputs {.sidebar}
+--------------------------------------------------------------------------------
+
+### Painel de seleção
+
+Selecione aqui as definições do boxplot.
+
+<hr style="border-top: 3px solid black; margin: 10px 0;">
+
+```{r}
+selectInput("ano_boxplot", "Ano:",
+            choices = unique(df$Ano),
+            selected = "2022")
+
+selectInput("mes_boxplot", HTML("Mês:<br>(Apenas no Único)"),
+            choices = unique(meses),
+            selected = "Janeiro")
+
+selectInput("escala_geo_boxplot", "Escala geográfica:",
+            choices = c("Brasil", "Região", "UF"),
+            selected = "Brasil")
+
+selectInput("UF_regiao_boxplot", "Região/UF:", choices = NULL)
+observe({
+  req(input$escala_geo_boxplot != "Brasil")
+  updateSelectInput(session, "UF_regiao_boxplot",
+                    choices = switch(input$escala_geo_boxplot,
+                                     "Região" = unique(df$name_region),
+                                     "UF" = setdiff(unique(RTL_muni_uf$SIGLA_UF), "DF")),
+                    selected = NULL)})
+```
+
+<hr style="border-top: 3px solid black; margin: 10px 0;">
+
+Fonte: *Atmospheric Composition Analysis Group*
+
+```{r}
+actionButton("info_boxplot", "Informações", icon = icon("info-circle"))
+observeEvent(input$info_boxplot, {
+  shinyalert::shinyalert(
+    title = "Visualização e Opções de Filtros",
+    text = HTML("
+    <div style='text-align: left;'>
+    <center><b><u>Visualização</u></b></center>
+    <ul>
+        <li><b>Único</b>:</li>
+          <p>Exibe o boxplot apenas do mês selecionado.</p>
+          <br>
+        <li><b>Facetado</b>:</li>
+          <p>Exibe o boxplot de cada mês do ano selecionado.</p>
+          <br>
+    </ul>
+    <center><b><u>Filtros</u></b></center>
+      <ul>
+        <li><b>Ano</b>:</li>
+          <p>Selecione o ano entre 2000 e 2022.</p>
+          <br>
+        <li><b>Mês</b>:</li>
+          <p>Selecione o mês entre Janeiro e Dezembro.</p>
+          <br>
+        <li><b>Escala geográfica</b>:</li>
+          <p>Amplitude geográfica da análise, podendo ser:</p>
+          <p><u>Brasil</u>:País;</p>
+          <p><u>Região</u>:Grandes Regiões;</p>
+          <p><u>UF</u>: Unidades da Federação, menos o Distrito Federal.</p>
+          <br>
+        <li><b>Região/UF</b>:</li>
+          <p>Selecione a Região ou a UF, dependendo da escala geográfica selecionada.</p>
+      </ul>
+    </div>"
+    ),
+    type = "info",
+    showConfirmButton = TRUE,
+    html = TRUE
+    )
+  })
+```
+
+<br>
+
+```{r }
+# Botão de Download
+## Unico
+downloadButton("download_boxplot_unico", "Baixar Boxplot Único")
+output$download_boxplot_unico <- downloadHandler(
+    filename = function() {
+      paste0("Boxplot_unico_PM25_", Sys.Date(), ".png")
+    },
+    content = function(file) {
+      ggsave(file, plot = boxplot_unico_reactive(), device = "png", width = 6, height = 4)
+    }
+  )
+
+## Facetado
+downloadButton("download_boxplot_facetado", "Baixar Boxplot Facetado")
+output$download_boxplot_facetado <- downloadHandler(
+    filename = function() {
+      modo_rederizacao("download")
+      paste0("Boxplot_facetado_PM25_", Sys.Date(), ".png")
+    },
+    content = function(file) {
+      modo_rederizacao("download")
+      ggsave(file, plot = boxplot_facetado_reactive(), device = "png", width = 6, height = 4)
+    }
+  )
+```
+
+Boxplot {.tabset}
+--------------------------------------------------------------------------------
+### Único
+
+```{r}
+boxplot_unico_reactive <- reactive({
+  
+  # Título
+  labs.title_local_boxplot_unico <- switch(input$escala_geo_boxplot,
+                                           "Brasil" = "Brasil",
+                                           "Região" = input$UF_regiao_boxplot,
+                                           "UF" = input$UF_regiao_boxplot
+                                           )
+  
+  # Base
+  df_boxplot_unico_filtrada <- switch(input$escala_geo_boxplot,
+                                      "Brasil" = df[df$Ano == input$ano_boxplot
+                                                    & df$Mes == input$mes_boxplot, ],
+                                      "Região" = df[df$Ano == input$ano_boxplot
+                                                    & df$Mes == input$mes_boxplot
+                                                    & df$name_region == input$UF_regiao_boxplot, ],
+                                      "UF" = df[df$Ano == input$ano_boxplot
+                                                & df$Mes == input$mes_boxplot
+                                                & df$SIGLA_UF == input$UF_regiao_boxplot, ]
+                                      )
+  
+  # Plot
+  ggplot(df_boxplot_unico_filtrada, aes(y = Media_PM25, x = Ano))+
+    geom_violin(fill = "cornflowerblue") +
+    geom_boxplot(fill = "darkorange",
+                 width = 0.2) +
+    labs(title = paste("Média PM<sub>2.5</sub> -<b>", labs.title_local_boxplot_unico, "</b>em<b>",
+                       input$mes_boxplot, "</b>de<b>", input$ano_boxplot, "</b>"),
+         x = "", y = expression(PM[2.5] ~ "[" ~ µg/m^3 ~ "]")) +
+    theme_bw()+
+    theme(plot.title = ggtext::element_markdown(size = ifelse(modo_rederizacao() == "dashboard", 20, 14),
+                                                hjust = 0.5),
+          panel.border = element_blank(),
+          legend.background = element_blank(),
+          axis.text.x = element_blank(),
+          axis.text.y = element_text(size = ifelse(modo_rederizacao() == "dashboard", 14, 8),
+                                     face = 'bold'),
+          axis.title.y = element_text(size = ifelse(modo_rederizacao() == "dashboard", 14, 8),
+                                      face = 'bold'),
+          axis.ticks = element_blank(),
+          panel.grid.major.y = element_line(color = 'gray60'))
+   }
+)
+
+output$boxplot_unico <- renderPlot({
+  modo_rederizacao("dashboard")
+  boxplot_unico_reactive()
+})
+  
+fillPage(plotOutput("boxplot_unico", height = "100%", width = "100%"))
+```
+
+### Facetado
+
+```{r}
+boxplot_facetado_reactive <- reactive({
+  
+  # Título
+  labs.title_local_boxplot_facetado <- switch(input$escala_geo_boxplot,
+                                              "Brasil" = "Brasil",
+                                              "Região" = input$UF_regiao_boxplot,
+                                              "UF" = input$UF_regiao_boxplot
+                                              )
+  
+  # Base
+  df_boxplot_facetado_filtrada <- switch(input$escala_geo_boxplot,
+                                         "Brasil" = df[df$Ano == input$ano_boxplot, ],
+                                         "Região" = df[df$Ano == input$ano_boxplot
+                                                       & df$name_region == input$UF_regiao_boxplot, ],
+                                         "UF" = df[df$Ano == input$ano_boxplot
+                                                   & df$SIGLA_UF == input$UF_regiao_boxplot, ]
+                                         )
+    
+  # Plot
+  ggplot(df_boxplot_facetado_filtrada, aes(y = Media_PM25, x = Ano))+
+    geom_violin(fill = "cornflowerblue") +
+    geom_boxplot(fill = "darkorange",
+                 width = 0.2) +
+    labs(title = paste("Média PM<sub>2.5</sub> -<b>", labs.title_local_boxplot_facetado,
+                       "</b>em<b>", input$ano_boxplot, "</b>"),
+         x = "", y = expression(PM[2.5] ~ "[" ~ µg/m^3 ~ "]")) +
+    theme_bw()+
+    facet_wrap(~factor(Mes, levels = meses)) +
+    theme(plot.title = ggtext::element_markdown(size = ifelse(modo_rederizacao() == "dashboard", 20, 14),
+                                                hjust = 0.5),
+          panel.border = element_blank(),
+          legend.background = element_blank(),
+          axis.text.x = element_blank(),
+          axis.text.y = element_text(size = ifelse(modo_rederizacao() == "dashboard", 14, 8),
+                                     face = 'bold'),
+          axis.ticks = element_blank(),
+          panel.grid.major.y = element_line(color = 'gray60'))
+   }
+)
+
+output$boxplot_facetado <- renderPlot({
+  modo_rederizacao("dashboard")
+  boxplot_facetado_reactive()
+})
+
+fillPage(plotOutput("boxplot_facetado", height = "100%", width = "100%"))
+```
+
+Série Temporal{data-icon="fa-line-chart"}
+================================================================================
+
+Inputs {.sidebar}
+--------------------------------------------------------------------------------
+
+### Painel de seleção
+
+Selecione aqui os parâmetros da serie temporal.
+
+<hr style="border-top: 3px solid black; margin: 10px 0;">
+
+```{r }
+selectInput("escala_geo_serie", "Escala geográfica:",
+            choices = c("Brasil", "Região", "UF", "Município"),
+            selected = "Brasil")
+
+selectInput("regiao_UF_serie", "Região/UF:", choices = NULL)
+observe({
+  req(input$escala_geo_serie != "Brasil")
+  updateSelectInput(session, "regiao_UF_serie",
+                    choices = switch(input$escala_geo_serie,
+                                     "Região" = unique(df$name_region),
+                                     "UF" = unique(df$SIGLA_UF),
+                                     "Município" = unique(df$SIGLA_UF)),
+                    selected = NULL)})
+
+selectInput("municipio_serie", "Município:", choices = NULL)
+observe({
+  req(input$escala_geo_serie == "Município", !is.null(input$regiao_UF_serie))
+  updateSelectInput(session, "municipio_serie",
+                    choices = RTL_muni_uf |> 
+                              filter(SIGLA_UF == input$regiao_UF_serie) |> 
+                              pull(NM_MUN),
+                    selected = NULL)
+})
+```
+
+<hr style="border-top: 3px solid black; margin: 10px 0;">
+
+Fonte: *Atmospheric Composition Analysis Group*
+
+```{r}
+actionButton("info_serie", "Informações", icon = icon("info-circle"))
+observeEvent(input$info_serie, {
+  shinyalert::shinyalert(
+    title = "Opções de Filtros",
+    text = HTML("
+    <div style='text-align: left;'>
+      <ul>
+        <li><b>Intervalo de datas</b>:</li>
+          <p>Selecione o intervalo de dadas entre 2000 e 2022 (válido apenas o primeiro dia de cada mês).</p>
+          <br>
+        <li><b>Escala geográfica</b>:</li>
+          <p>Amplitude geográfica da análise, podendo ser:</p>
+          <p><u>Brasil</u>:País;</p>
+          <p><u>Região</u>:Grandes Regiões;</p>
+          <p><u>UF</u>: Unidades da Federação, menos o Distrito Federal;</p>
+          <p><u>Município</u>:Município.</p>
+          <br>
+        <li><b>Região/UF</b>:</li>
+          <p>Selecione a Região ou a UF, dependendo da escala geográfica selecionada.</p>
+          <br>
+        <li><b>Município</b>:</li>
+          <p>Selecione o Município da respectiva UF selecionada.</p>
+          <br>
+      </ul>
+    </div>"
+    ),
+    type = "info",
+    showConfirmButton = TRUE,
+    html = TRUE
+    )
+  })
+```
+
+Serie Temporal
+--------------------------------------------------------------------------------
+
+```{r}
+output$serie_plot <- renderPlotly({
+  # Título
+  labs.title_serie <- paste("Média PM<sub>2.5</sub> -<b>",
+                            switch(input$escala_geo_serie,
+                                   "Brasil" = "Brasil",
+                                   "Região" = input$regiao_UF_serie,
+                                   "UF" = input$regiao_UF_serie,
+                                   "Município" = input$municipio_serie),"</b>")
+  
+  # Base
+  df_serie_filtrada <- switch(
+    input$escala_geo_serie,
+    "Brasil" = df|> 
+      group_by(data) |> 
+      summarise(Media_PM25 = mean(Media_PM25),
+                .groups = 'drop'),
+    "Região" = df[df$name_region == input$regiao_UF_serie, ] |> 
+      group_by(data) |> 
+      summarise(Media_PM25 = mean(Media_PM25),
+                .groups = 'drop'),
+    "UF" = df[df$SIGLA_UF == input$regiao_UF_serie, ] |> 
+      group_by(data) |> 
+      summarise(Media_PM25 = mean(Media_PM25),
+                .groups = 'drop'),
+    "Município" = df[df$NM_MUN == input$municipio_serie, ])
+
+  # Plot
+  plot_ly(df_serie_filtrada, x = ~data, y = ~Media_PM25, type = 'scatter', mode = 'lines') %>%
+  layout(title = list(text = labs.title_serie),
+         xaxis = list(type = "date",
+                      rangeslider = list(visible = TRUE),
+                      rangeselector = list(buttons = list(list(count = 1, label = "1m", step = "month", stepmode = "backward"),
+                                                          list(count = 3, label = "3m", step = "month", stepmode = "backward"),
+                                                          list(count = 6, label = "6m", step = "month", stepmode = "backward"),
+                                                          list(count = 1, label = "YTD", step = "year", stepmode = "todate"),
+                                                          list(count = 1, label = "1y", step = "year", stepmode = "backward"),
+                                                          list(step = "all", label = "All")))),
+         yaxis = list(title = list(text = "Média")),
+         hovermode = "x unified")
+})
+
+fillPage(plotlyOutput("serie_plot", height = "100%", width = "100%"))
+```

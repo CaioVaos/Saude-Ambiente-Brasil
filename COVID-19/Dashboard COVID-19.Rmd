@@ -1,0 +1,658 @@
+---
+title: "Dashboard COVID-19"
+author: "Estatística - UFF"
+date: '2024.2'
+output:
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: fill
+    source_code: embed
+    theme: 
+      version: 4
+      bootswatch: cosmo
+      primary: "#000000"
+runtime: shiny
+resource_files:
+- 'base/data_month_new_case_covid19_2024.1_2023_2022_2021_2020.feather'
+- 'bases/shapes.gpkg'
+---
+
+```{r setup, include=FALSE}
+# Pacotes
+library(sf)
+library(dplyr)
+library(ggplot2)
+library(shiny)
+library(plotly)
+
+# Bases
+shape_muni <- st_read('base/shapes.gpkg', layer = "shape_muni")
+shape_br <- st_read('base/shapes.gpkg', layer = "shape_br")
+df <- arrow::read_feather('base/data_month_new_case_covid19_2024.1_2023_2022_2021_2020.feather')
+
+# Rotulos
+meses <- c("Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+           "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro")
+RTL_muni_uf <- df |> distinct(name_muni, UF)
+
+# Outros
+modo_rederizacao <- reactiveVal("dashboard")
+```
+
+Introdução{data-icon="fa-book-open"}
+================================================================================
+
+<center>
+  <span style="font-size: 2em">
+**Monitoramento da Covid-19 no Brasil**
+  </span>
+</center>
+
+<br>
+
+Este dashboard apresenta dados detalhados de março de 2020 a julho de 2024, permitindo uma análise abrangente da evolução da pandemia em diferentes escalas: municipal, estadual e nacional.
+
+**O que é a COVID-19?**
+
+A COVID-19 é uma doença respiratória causada pelo coronavírus SARS-CoV-2, identificado pela primeira vez em dezembro de 2019.
+
+Sua transmissão ocorre principalmente por meio de gotículas respiratórias, contato próximo com pessoas infectadas e superfícies contaminadas.
+
+A doença pode variar de casos assintomáticos a quadros graves que requerem hospitalização, com sintomas como:
+
+- Febre, tosse e dor de garganta;
+
+- Dificuldade para respirar (dispneia);
+
+- Perda de olfato e paladar;
+
+- Cansaço extremo e dores no corpo.
+
+Os casos graves podem evoluir para Síndrome Respiratória Aguda Grave (SRAG), exigindo cuidados intensivos.
+
+**Fontes de Dados**
+
+Os dados apresentados são provenientes do OpenDataSUS, plataforma do Ministério da Saúde, responsável pela compilação de informações epidemiológicas sobre a COVID-19 no Brasil.
+
+Desde o início da pandemia, a vigilância desses casos tem sido essencial para orientar políticas públicas e estratégias de controle da doença.
+
+**Como utilizar o Dashboard?**
+
+Este painel interativo permite visualizar e analisar a distribuição dos casos ao longo do tempo e entre diferentes regiões, utilizando:
+
+- Mapas interativos, que mostram a incidência da doença em nível municipal, estadual e nacional;
+
+- Boxplots, que permitem a comparação estatística das distribuições dos casos entre diferentes períodos e localidades;
+
+- Séries históricas, que evidenciam a evolução dos casos ao longo dos meses e anos.
+
+Explore os dados, compare as tendências entre municípios e estados e obtenha insights valiosos sobre a disseminação e o impacto da COVID-19 no Brasil.
+
+Mapa{data-icon="fa-map"}
+================================================================================
+
+Inputs Mapa {.sidebar}
+--------------------------------------------------------------------------------
+
+### Painel de seleção
+
+<hr style="border-top: 3px solid black; margin: 10px 0;">
+
+```{r }
+selectInput("ano_mapa", "Ano:",
+            choices = unique(df$Year),
+            selected = 2020)
+
+selectInput("mes_mapa", "Mês:", choices = NULL)
+observe({
+  req(input$ano_mapa)
+  updateSelectInput(session, "mes_mapa",
+                    choices = unique(df[df$Year == input$ano_mapa, ]$Month),
+                    selected = NULL)})
+
+selectInput("limite_mapa", HTML("Limite do padrão da escala:<br>
+                                (Apenas no mapa de Variação)"),
+            choices = c("Mês", "Ano", "Geral"),
+            selected = "Mês")
+```
+
+<hr style="border-top: 3px solid black; margin: 10px 0;">
+
+Fonte: *OpenDataSUS*
+
+```{r}
+actionButton("info_mapa", "Informações", icon = icon("info-circle"))
+observeEvent(input$info_mapa, {
+  shinyalert::shinyalert(
+    title = "Visualização e Opções de Filtros",
+    text = HTML("
+    <div style='text-align: left;'>
+    <center><b><u>Visualização</u></b></center>
+    <ul>
+        <li><b>Variação</b>:</li>
+          <p>Exibe os valores da análise.</p>
+          <br>
+        <li><b>Distribuição</b>:</li>
+          <p>Exibe a distribuição em quartis dos valores da análise (calculado apenas dos municípios que tiveram observações).</p>
+          <br>
+    </ul>
+    <center><b><u>Filtros</u></b></center>
+      <ul>
+        <li><b>Ano</b>:</li>
+          <p>Selecione o ano entre 2020 e 2024.</p>
+          <br>
+        <li><b>Mês</b>:</li>
+          <p>Selecione o mês dentre os disponível para o respectivo ano.</p>
+          <br>
+        <li><b>Limite do padrão da escala</b>:</li>
+          <p>Fixa no nível da escala lateral do mapa, podendo ser:</p>
+          <p><u>Mês</u>:Mínimo e Máximo do mês analisado;</p>
+          <p><u>Ano</u>:Mínimo e Máximo do ano analisado;</p>
+          <p><u>Geral</u>:Mínimo e Máximo de todo o período analisado.</p>
+      </ul>
+    </div>"
+    ),
+    type = "info",
+    showConfirmButton = TRUE,
+    html = TRUE
+    )
+  })
+```
+
+<br>
+
+```{r }
+# Botão de Download
+## Unico
+downloadButton("download_mapa_variacao", "Baixar Mapa Variação")
+output$download_mapa_variacao <- downloadHandler(
+    filename = function() {
+      paste0("Mapa_variação_COVID19_", Sys.Date(), ".png")
+    },
+    content = function(file) {
+      modo_rederizacao("download")
+      ggsave(file, plot = plot_mapa_variacao_reactive(), device = "png", width = 6, height = 4)
+    }
+  )
+
+## Facetado
+downloadButton("download_mapa_distribuicao", "Baixar Mapa Distribuição")
+output$download_mapa_distribuicao <- downloadHandler(
+    filename = function() {
+      paste0("Mapa_Distribuição_COVID19_", Sys.Date(), ".png")
+    },
+    content = function(file) {
+      modo_rederizacao("download")
+      ggsave(file, plot = plot_mapa_distribuicao_reactive(), device = "png", width = 6, height = 4)
+    }
+  )
+```
+
+Mapa {.tabset}
+--------------------------------------------------------------------------------
+### Variação
+
+```{r}
+plot_mapa_variacao_reactive <- reactive({
+  
+  # Filtrando base
+  df_mapa_variacao_filtrada <- df[df$Year == input$ano_mapa, ]
+  limite_pdr_ano <- c(min(df_mapa_variacao_filtrada$NewCases),
+                      max(df_mapa_variacao_filtrada$NewCases))
+  df_mapa_variacao_filtrada <- filter(df_mapa_variacao_filtrada, Month == input$mes_mapa) |>
+    full_join(shape_muni, by = c("codmun" = "code_muni")) |> 
+    mutate(NewCases = tidyr::replace_na(NewCases, 0))
+    
+  
+  # Padronização da escala
+  limite_pdr_mapa <- switch(input$limite_mapa,
+                            "Mês" = c(min(df_mapa_variacao_filtrada$NewCases),
+                                      max(df_mapa_variacao_filtrada$NewCases)),
+                            "Ano" = limite_pdr_ano,
+                            "Geral" = c(0, 1400763))
+  # Mapa
+  ggplot(df_mapa_variacao_filtrada) +
+     geom_sf(aes(fill = NewCases, col = NewCases, geometry = geom)) +
+     geom_sf(data= shape_br, fill= "transparent", lwd= 0.4, col= "black")+
+     scale_fill_gradient(low = "#fff3b0",
+                          high = "#540b0e",
+                          labels = scales::label_number(scale = ifelse(max(limite_pdr_mapa) >= 1e6, 1e-6, 1e-3)),
+                          limits= limite_pdr_mapa,
+                          guide = guide_colorbar(direction = "vertical",
+                                                 barheight = if (modo_rederizacao() == "dashboard") unit(0.8, "npc") else NULL,
+                                                 barwidth = if (modo_rederizacao() == "dashboard") unit(0.035, "npc") else NULL)) +
+     scale_color_gradient(low = "#fff3b0",
+                          high = "#540b0e",
+                          labels = scales::label_number(scale = ifelse(max(limite_pdr_mapa) >= 1e6, 1e-6, 1e-3)),
+                          limits= limite_pdr_mapa,
+                          guide = guide_colorbar(direction = "vertical",
+                                                 barheight = if (modo_rederizacao() == "dashboard") unit(0.8, "npc") else NULL,
+                                                 barwidth = if (modo_rederizacao() == "dashboard") unit(0.035, "npc") else NULL)) +
+     labs(title = paste("Novos Casos de COVID-19 -<b>",
+                        input$mes_mapa, "</b>de<b>", input$ano_mapa, "</b>"),
+          x = "", y = "",
+          fill = paste("Observações em",
+                       ifelse(max(limite_pdr_mapa) >= 1e6, "milhões", "milhar")),
+          col = paste("Observações em",
+                      ifelse(max(limite_pdr_mapa) >= 1e6, "milhões", "milhar"))) +
+     theme_bw() +
+     theme(plot.title = ggtext::element_markdown(size = ifelse(modo_rederizacao() == "dashboard", 20, 14),
+                                                 hjust = 0.5),
+           panel.border = element_blank(),
+           legend.background = element_blank(),
+           legend.text = element_text(size = ifelse(modo_rederizacao() == "dashboard", 14, 10),
+                                      face = 'bold'),
+           legend.title = element_text(size = ifelse(modo_rederizacao() == "dashboard", 14, 10),
+                                       face = "bold"),
+           axis.ticks = element_blank())
+})
+
+output$plot_mapa_variacao <- renderPlot({
+  modo_rederizacao("dashboard")
+  plot_mapa_variacao_reactive()
+})
+
+fillPage(plotOutput("plot_mapa_variacao", height = "100%", width = "100%"))
+```
+
+### Distribuição
+
+```{r}
+plot_mapa_distribuicao_reactive <- reactive({
+  
+  # Preparando base
+  df_mapa_distribuicao_filtrada <- df[df$Year == input$ano_mapa
+                                      & df$Month == input$mes_mapa, ] |> 
+    full_join(shape_muni, by = c("codmun" = "code_muni")) |> 
+    mutate(NewCases = tidyr::replace_na(NewCases, 0))
+  
+  quartis_mapa_distribuicao <- quantile(df_mapa_distribuicao_filtrada$NewCases,
+                                        probs = seq(0, 1, by = 0.25))
+  label_quartil <- c(paste("Q1 - de", floor(quartis_mapa_distribuicao[1]),
+                           "a",floor(quartis_mapa_distribuicao[2])),
+                     paste("Q2 - de", floor(quartis_mapa_distribuicao[2]),
+                           "a", floor(quartis_mapa_distribuicao[3])),
+                     paste("Q3 - de", floor(quartis_mapa_distribuicao[3]),
+                           "a", floor(quartis_mapa_distribuicao[4])),
+                     paste("Q4 - de", floor(quartis_mapa_distribuicao[4]),
+                           "a", floor(quartis_mapa_distribuicao[5]))) 
+  
+  validate(
+    need(!anyDuplicated(quartis_mapa_distribuicao), 
+         paste("Os quartis de", input$mes_mapa, "-",input$ano_mapa,
+               "possuem valores duplicados. Não é possível gerar o gráfico."))
+  )
+  
+  df_mapa_distribuicao_filtrada <- mutate(df_mapa_distribuicao_filtrada,
+                                          quartis = cut(NewCases, 
+                                                        breaks = quartis_mapa_distribuicao,
+                                                        include.lowest = TRUE, 
+                                                        labels = label_quartil, 
+                                                        right = FALSE))
+  # Cores dos quartis
+  cores_quartis <- cores_quartis <- setNames(c("#fff3b0", "#e09f3e", "#9e2a2b", "#540b0e"),
+                                             label_quartil)
+  
+  # Mapa
+  ggplot(df_mapa_distribuicao_filtrada) +
+    geom_sf(aes(fill = quartis, col = quartis, geometry = geom)) +
+    geom_sf(data= shape_br, fill= "transparent", lwd= 0.4, col= "black")+
+    scale_fill_manual(values = cores_quartis)+
+    scale_color_manual(values = cores_quartis)+
+    labs(title = paste("Novos Casos de COVID-19 -<b>",
+                        input$mes_mapa, "</b>de<b>", input$ano_mapa, "</b>"),
+         x = "", y = "", fill = "Quartis", col = "Quartis") +
+    theme_bw() +
+    theme(plot.title = ggtext::element_markdown(size = ifelse(modo_rederizacao() == "dashboard", 20, 16),
+                                                hjust = 0.5),
+          panel.border = element_blank(),
+          legend.background = element_blank(),
+          legend.text = element_text(size = ifelse(modo_rederizacao() == "dashboard", 14, 10),
+                                     face = 'bold'),
+          legend.title = element_text(size = ifelse(modo_rederizacao() == "dashboard", 14, 10),
+                                      face = "bold"),
+          axis.ticks = element_blank())
+})
+
+output$plot_mapa_distribuicao <- renderPlot({
+  modo_rederizacao("dashboard")
+  plot_mapa_distribuicao_reactive()
+})
+
+fillPage(plotOutput("plot_mapa_distribuicao", height = "100%", width = "100%"))
+```
+
+Boxplot{data-icon="fa-bar-chart"}
+================================================================================
+
+Inputs Boxplot {.sidebar}
+--------------------------------------------------------------------------------
+
+### Painel de seleção
+
+<hr style="border-top: 3px solid black; margin: 10px 0;">
+
+```{r}
+selectInput("ano_boxplot", "Ano:",
+            choices = unique(df$Year),
+            selected = "2022")
+
+selectInput("mes_boxplot", HTML("Mês:<br>(Apenas no Único)"), choices = NULL)
+observe({
+  req(input$ano_boxplot)
+  updateSelectInput(session, "mes_boxplot",
+                    choices = unique(df[df$Year == input$ano_boxplot, ]$Month),
+                    selected = NULL)})
+
+selectInput("escala_geo_boxplot", "Escala geográfica:",
+            choices = c("Brasil", "Região", "UF"),
+            selected = "Brasil")
+
+selectInput("UF_regiao_boxplot", "Região/UF:", choices = NULL)
+observe({
+  req(input$escala_geo_boxplot != "Brasil")
+  updateSelectInput(session, "UF_regiao_boxplot",
+                    choices = switch(input$escala_geo_boxplot,
+                                     "Região" = unique(df$name_region),
+                                     "UF" = setdiff(unique(df$UF), "DF")),
+                    selected = NULL)})
+```
+
+<hr style="border-top: 3px solid black; margin: 10px 0;">
+
+Fonte: *OpenDataSUS*
+
+```{r}
+actionButton("info_boxplot", "Informações", icon = icon("info-circle"))
+observeEvent(input$info_boxplot, {
+  shinyalert::shinyalert(
+    title = "Visualização e Opções de Filtros",
+    text = HTML("
+    <div style='text-align: left;'>
+    <center><b><u>Visualização</u></b></center>
+    <ul>
+        <li><b>Único</b>:</li>
+          <p>Exibe o boxplot apenas do mês selecionado.</p>
+          <br>
+        <li><b>Facetado</b>:</li>
+          <p>Exibe o boxplot de cada mês do ano selecionado.</p>
+          <br>
+    </ul>
+    <center><b><u>Filtros</u></b></center>
+      <ul>
+        <li><b>Ano</b>:</li>
+          <p>Selecione o ano entre 2020 e 2024.</p>
+          <br>
+        <li><b>Mês</b>:</li>
+          <p>Selecione o mês dentre os disponível para o respectivo ano.</p>
+          <br>
+        <li><b>Escala geográfica</b>:</li>
+          <p>Amplitude geográfica da análise, podendo ser:</p>
+          <p><u>Brasil</u>:País;</p>
+          <p><u>Região</u>:Grandes Regiões;</p>
+          <p><u>UF</u>: Unidades da Federação, menos o Distrito Federal.</p>
+          <br>
+        <li><b>Região/UF</b>:</li>
+        <p>Selecione a Região ou a UF, dependendo da escala geográfica selecionada.</p>
+      </ul>
+    </div>"
+    ),
+    type = "info",
+    showConfirmButton = TRUE,
+    html = TRUE
+    )
+  })
+```
+
+<br>
+
+```{r }
+# Botão de Download
+## Unico
+downloadButton("download_boxplot_unico", "Baixar Boxplot Único")
+output$download_boxplot_unico <- downloadHandler(
+    filename = function() {
+      paste0("Boxplot_unico_PM25_", Sys.Date(), ".png")
+    },
+    content = function(file) {
+      modo_rederizacao("download")
+      ggsave(file, plot = boxplot_unico_reactive(), device = "png", width = 6, height = 4)
+    }
+  )
+
+## Facetado
+downloadButton("download_boxplot_facetado", "Baixar Boxplot Facetado")
+output$download_boxplot_facetado <- downloadHandler(
+    filename = function() {
+      paste0("Boxplot_facetado_PM25_", Sys.Date(), ".png")
+    },
+    content = function(file) {
+      modo_rederizacao("download")
+      ggsave(file, plot = boxplot_facetado_reactive(), device = "png", width = 6, height = 4)
+    }
+  )
+```
+
+Boxplot {.tabset}
+--------------------------------------------------------------------------------
+### Único
+
+```{r}
+boxplot_unico_reactive <- reactive({
+  
+  # Título
+  labs.title_local_boxplot_unico <- switch(input$escala_geo_boxplot,
+                                           "Brasil" = "Brasil",
+                                           "Região" = input$UF_regiao_boxplot,
+                                           "UF" = input$UF_regiao_boxplot)
+  
+  # Filtrando base
+  df_boxplot_unico_filtrada <- switch(input$escala_geo_boxplot,
+                                      "Brasil" = df[df$Year == input$ano_boxplot
+                                                    & df$Month == input$mes_boxplot, ],
+                                      "Região" = df[df$Year == input$ano_boxplot
+                                                    & df$Month == input$mes_boxplot
+                                                    & df$name_region == input$UF_regiao_boxplot, ],
+                                      "UF" = df[df$Year == input$ano_boxplot
+                                                & df$Month == input$mes_boxplot
+                                                & df$UF == input$UF_regiao_boxplot, ])
+  # Plot
+  ggplot(df_boxplot_unico_filtrada, aes(y = NewCases, x = Year))+
+    geom_violin(fill = "cornflowerblue") +
+    geom_boxplot(fill = "darkorange",
+                 width = 0.2) +
+    scale_y_continuous(labels = scales::label_number(
+      scale = ifelse(max(df_boxplot_unico_filtrada$NewCases) >= 1e6, 1e-6, 1e-3)))+
+    labs(title = paste("Novos Casos de COVID-19 em<b>", labs.title_local_boxplot_unico, "</b>-<b>",
+                        input$mes_boxplot, "</b>de<b>", input$ano_boxplot, "</b>"),
+         x = "", y = ifelse(max(df_boxplot_unico_filtrada$NewCases) >= 1e6, "milhões", "mil")) +
+    theme_bw()+
+    theme(plot.title = ggtext::element_markdown(size = ifelse(modo_rederizacao() == "dashboard", 20, 14),
+                                                hjust = 0.5),
+          panel.border = element_blank(),
+          legend.background = element_blank(),
+          axis.text.x = element_blank(),
+          axis.text.y = element_text(size = ifelse(modo_rederizacao() == "dashboard", 14, 8),
+                                     face = 'bold'),
+          axis.ticks = element_blank(),
+          axis.title.y = element_text(size = ifelse(modo_rederizacao() == "dashboard", 14, 8),
+                                      face = 'bold'),
+          panel.grid.major.y = element_line(color = 'gray60'))
+   }
+)
+
+output$boxplot_unico <- renderPlot({
+  modo_rederizacao("dashboard")
+  boxplot_unico_reactive()
+})
+  
+fillPage(plotOutput("boxplot_unico", height = "100%", width = "100%"))
+```
+
+### Facetado
+
+```{r}
+boxplot_facetado_reactive <- reactive({
+  
+  # Título
+  labs.title_local_boxplot_facetado <- switch(input$escala_geo_boxplot,
+                                              "Brasil" = "Brasil",
+                                              "Região" = input$UF_regiao_boxplot,
+                                              "UF" = input$UF_regiao_boxplot)
+  
+  # Filtrando base
+  df_boxplot_facetado_filtrada <- switch(input$escala_geo_boxplot,
+                                         "Brasil" = df[df$Year == input$ano_boxplot, ],
+                                         "Região" =df[df$Year == input$ano_boxplot
+                                                      & df$name_region == input$UF_regiao_boxplot, ],
+                                         "UF" = df[df$Year == input$ano_boxplot
+                                                   & df$UF == input$UF_regiao_boxplot, ])
+  # Plot
+  ggplot(df_boxplot_facetado_filtrada, aes(y = NewCases, x = Year))+
+    geom_violin(fill = "cornflowerblue") +
+    geom_boxplot(fill = "darkorange",
+                 width = 0.2) +
+    scale_y_continuous(labels = scales::label_number(
+      scale = ifelse(max(df_boxplot_facetado_filtrada$NewCases) >= 1e6, 1e-6, 1e-3)))+
+    labs(title = paste("Novos Casos de COVID-19 em<b>", labs.title_local_boxplot_facetado,
+                       "</b>-<b>", input$ano_boxplot, "</b>"),
+         x = "", y = ifelse(max(df_boxplot_facetado_filtrada$NewCases) >= 1e6, "milhões", "mil")) +
+    theme_bw()+
+    facet_wrap(~factor(Month, levels = meses), ncol = 4) +
+    theme(plot.title = ggtext::element_markdown(size = ifelse(modo_rederizacao() == "dashboard", 20, 14),
+                                                hjust = 0.5),
+          panel.border = element_blank(),
+          legend.background = element_blank(),
+          axis.text.x = element_blank(),
+          axis.ticks = element_blank(),
+          axis.title.y = element_text(size = ifelse(modo_rederizacao() == "dashboard", 14, 8),
+                                      face = 'bold'),
+          panel.grid.major.y = element_line(color = 'gray60'))
+   }
+)
+
+output$boxplot_facetado <- renderPlot({
+  modo_rederizacao("dashboard")
+  boxplot_facetado_reactive()
+})
+
+fillPage(plotOutput("boxplot_facetado", height = "100%", width = "100%"))
+```
+
+Série Temporal{data-icon="fa-line-chart"}
+================================================================================
+
+Inputs {.sidebar}
+--------------------------------------------------------------------------------
+
+### Painel de seleção
+
+<hr style="border-top: 3px solid black; margin: 10px 0;">
+
+```{r }
+selectInput("escala_geo_serie", "Escala geográfica:",
+            choices = c("Brasil", "Região", "UF", "Município"),
+            selected = "Brasil")
+
+selectInput("regiao_UF_serie", "Região/UF:", choices = NULL)
+observe({
+  req(input$escala_geo_serie != "Brasil")
+  updateSelectInput(session, "regiao_UF_serie",
+                    choices = switch(input$escala_geo_serie,
+                                     "Região" = unique(df$name_region),
+                                     "UF" = unique(df$UF),
+                                     "Município" = unique(df$UF)),
+                    selected = NULL)})
+
+selectInput("municipio_serie", "Município:", choices = NULL)
+observe({
+  req(input$escala_geo_serie == "Município", !is.null(input$regiao_UF_serie))
+  updateSelectInput(session, "municipio_serie",
+                    choices = RTL_muni_uf |> 
+                              filter(UF == input$regiao_UF_serie) |> 
+                              pull(name_muni),
+                    selected = NULL)
+})
+```
+
+<hr style="border-top: 3px solid black; margin: 10px 0;">
+
+Fonte: *OpenDataSUS*
+
+```{r}
+actionButton("info_serie", "Informações", icon = icon("info-circle"))
+observeEvent(input$info_serie, {
+  shinyalert::shinyalert(
+    title = "Opções de Filtros",
+    text = HTML("
+    <div style='text-align: left;'>
+      <ul>
+        <li><b>Intervalo de datas</b>:</li>
+          <p>Selecione o intervalo de dadas entre 2020 e 2024 (válido apenas o primeiro dia de cada mês).</p>
+          <br>
+        <li><b>Escala geográfica</b>:</li>
+          <p>Amplitude geográfica da análise, podendo ser:</p>
+          <p><u>Brasil</u>:País;</p>
+          <p><u>Região</u>:Grandes Regiões;</p>
+          <p><u>UF</u>: Unidades da Federação, menos o Distrito Federal;</p>
+          <p><u>Município</u>:Município.</p>
+          <br>
+        <li><b>Região/UF</b>:</li>
+        <p>Selecione a Região ou a UF, dependendo da escala geográfica selecionada.</p>
+        <br>
+        <li><b>Município</b>:</li>
+          <p>Selecione o Município da respectiva UF selecionada.</p>
+          <br>
+      </ul>
+    </div>"
+    ),
+    type = "info",
+    showConfirmButton = TRUE,
+    html = TRUE
+    )
+  })
+```
+
+Serie Temporal
+--------------------------------------------------------------------------------
+
+```{r}
+output$serie_plot <- renderPlotly({
+  # Título
+  labs.title_serie <- paste("Novos Casos de COVID-19 -<b>", switch(input$escala_geo_serie,
+                                                                   "Brasil" = "Brasil",
+                                                                   "Região" = input$regiao_UF_serie,
+                                                                   "UF" = input$regiao_UF_serie,
+                                                                   "Município" = input$municipio_serie), "</b>")
+  
+  # Base
+  df_serie_filtrada <- switch(
+    input$escala_geo_serie,
+    "Brasil" = df |> 
+      group_by(data) |> 
+      summarise(NewCases = sum(NewCases), .groups = 'drop'),
+    "Região" = df[df$name_region == input$regiao_UF_serie, ] |> 
+      group_by(data) |> 
+      summarise(NewCases = sum(NewCases), .groups = 'drop'),
+    "UF" = df[df$UF == input$regiao_UF_serie, ] |> 
+      group_by(data) |> 
+      summarise(NewCases = sum(NewCases), .groups = 'drop'),
+    "Município" = df[df$name_muni == input$municipio_serie, ]
+  )
+  
+  # Plot
+  plot_ly(df_serie_filtrada, x = ~data, y = ~NewCases, type = 'scatter', mode = 'lines', line = list(color = "darkblue")) %>%
+    layout(title = list(text = paste("Novos Casos de COVID-19 -<b>", labs.title_serie, "</b>"),
+                        font = list(size = 20)),
+           xaxis = list(title = ""),
+           yaxis = list(title = ifelse(max(df_serie_filtrada$NewCases) >= 1e6, "milhões", "mil"),
+                        tickformat = ifelse(max(df_serie_filtrada$NewCases) >= 1e6, ".2s", ".3s")),
+           hovermode = "x unified",
+           plot_bgcolor = "white",
+           xaxis = list(showgrid = TRUE, gridcolor = "gray60"),
+           yaxis = list(showgrid = TRUE, gridcolor = "gray80"),
+           margin = list(l = 50, r = 50, t = 50, b = 50))
+})
+
+fillPage(plotlyOutput("serie_plot", height = "100%", width = "100%"))
+```
